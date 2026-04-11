@@ -8,8 +8,13 @@ import json
 import os
 from pathlib import Path
 
+# Get project root directory (parent of mempalace package)
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
 DEFAULT_PALACE_PATH = os.path.expanduser("~/.mempalace/palace")
 DEFAULT_COLLECTION_NAME = "mempalace_drawers"
+DEFAULT_ASSETS_PATH = str(PROJECT_ROOT / "assets")
+DEFAULT_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
 DEFAULT_TOPIC_WINGS = [
     "emotions",
@@ -61,6 +66,17 @@ DEFAULT_HALL_KEYWORDS = {
     "creative": ["game", "gameplay", "player", "app", "design", "art", "music", "story"],
 }
 
+# Default hybrid search configuration
+DEFAULT_HYBRID_CONFIG = {
+    "enabled": True,
+    "alpha": 0.7,  # Dense retrieval weight
+    "beta": 0.3,  # Sparse retrieval weight
+    "doc_top_k": 20,  # Number of document candidates
+    "room_top_k": 5,  # Number of rooms to return
+    "aggregation_method": "average",  # Room aggregation method: average, max, weighted
+    "use_rerank": False,  # Whether to use LLM reranking (future feature)
+}
+
 
 class MempalaceConfig:
     """Configuration manager for MemPalace.
@@ -98,6 +114,19 @@ class MempalaceConfig:
         return self._file_config.get("palace_path", DEFAULT_PALACE_PATH)
 
     @property
+    def assets_path(self):
+        """Path to the assets directory for storing embedding models."""
+        env_val = os.environ.get("MEMPALACE_ASSETS_PATH")
+        if env_val:
+            return env_val
+        return self._file_config.get("assets_path", DEFAULT_ASSETS_PATH)
+
+    @property
+    def embedding_model(self):
+        """Embedding model to use for dense retrieval."""
+        return self._file_config.get("embedding_model", DEFAULT_EMBEDDING_MODEL)
+
+    @property
     def collection_name(self):
         """ChromaDB collection name."""
         return self._file_config.get("collection_name", DEFAULT_COLLECTION_NAME)
@@ -123,6 +152,22 @@ class MempalaceConfig:
         """Mapping of hall names to keyword lists."""
         return self._file_config.get("hall_keywords", DEFAULT_HALL_KEYWORDS)
 
+    @property
+    def hybrid_search_config(self):
+        """Hybrid search configuration.
+
+        Returns:
+            Dict with hybrid search settings:
+            - enabled: Whether hybrid search is enabled
+            - alpha: Dense retrieval weight (0.0-1.0)
+            - beta: Sparse retrieval weight (0.0-1.0)
+            - doc_top_k: Number of document candidates
+            - room_top_k: Number of rooms to return
+            - aggregation_method: Room aggregation method
+            - use_rerank: Whether to use LLM reranking
+        """
+        return self._file_config.get("hybrid_search", DEFAULT_HYBRID_CONFIG)
+
     def init(self):
         """Create config directory and write default config.json if it doesn't exist."""
         self._config_dir.mkdir(parents=True, exist_ok=True)
@@ -132,6 +177,7 @@ class MempalaceConfig:
                 "collection_name": DEFAULT_COLLECTION_NAME,
                 "topic_wings": DEFAULT_TOPIC_WINGS,
                 "hall_keywords": DEFAULT_HALL_KEYWORDS,
+                "hybrid_search": DEFAULT_HYBRID_CONFIG,
             }
             with open(self._config_file, "w") as f:
                 json.dump(default_config, f, indent=2)
