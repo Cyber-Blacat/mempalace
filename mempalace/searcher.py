@@ -50,7 +50,12 @@ def _get_collection_with_embeddings(client, collection_name: str, create: bool =
                 name=collection_name,
                 embedding_function=embedding_fn,
             )
-        except Exception:
+        except Exception as e:
+            # ChromaDB 1.x throws NotFoundError when collection doesn't exist
+            # Also handle other potential errors (permission, path issues, etc.)
+            logger.debug(
+                f"Collection '{collection_name}' not found or error: {type(e).__name__}: {e}"
+            )
             return None
 
 
