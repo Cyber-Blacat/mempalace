@@ -17,8 +17,9 @@ Usage:
 """
 
 import logging
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 
+from chromadb.api.types import Space
 
 from .config import MempalaceConfig
 
@@ -34,6 +35,8 @@ class LocalEmbeddingFunction:
 
     This avoids using system cache directories like ~/.cache/huggingface/
     by explicitly specifying the cache_folder to the assets/ directory.
+
+    Implements ChromaDB 1.x EmbeddingFunction protocol.
     """
 
     def __init__(
@@ -56,6 +59,152 @@ class LocalEmbeddingFunction:
         self.device = device
         self.normalize_embeddings = normalize_embeddings
         self._model = None
+
+    # ==================== ChromaDB 1.x EmbeddingFunction Protocol ====================
+
+    @staticmethod
+    def name() -> str:
+        """Return the name of this embedding function for ChromaDB API.
+
+        This is a static method as required by ChromaDB 1.x protocol.
+        """
+        return "local_sentence_transformers"
+
+    @staticmethod
+    def is_legacy() -> bool:
+        """Return False to indicate this is a modern embedding function."""
+        return False
+
+    @staticmethod
+    def default_space() -> Space:
+        """Return the default space for this embedding function."""
+        return "cosine"
+
+    @staticmethod
+    def supported_spaces() -> List[Space]:
+        """Return the list of supported spaces for this embedding function."""
+        return ["cosine", "l2", "ip"]
+
+    def embed_query(self, input: Union[str, List[str]]) -> List[List[float]]:
+        """Embed query texts.
+
+        Args:
+            input: The query string or list of strings to embed.
+
+        Returns:
+            List of embedding vectors.
+        """
+        if isinstance(input, str):
+            return [self._embed_single(input)]
+        return [self._embed_single(text) for text in input]
+
+    def _embed_single(self, text: str) -> List[float]:
+        """Embed a single text string.
+
+        Args:
+            text: The text string to embed.
+
+        Returns:
+            List of floats representing the embedding.
+        """
+        embeddings = self.model.encode(
+            [text],
+            normalize_embeddings=self.normalize_embeddings,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+        return embeddings[0].tolist()
+
+    def embed_with_retries(
+        self,
+        texts: List[str],
+        attempt: int = 0,
+        max_attempts: int = 3,
+        **kwargs: Any,
+    ) -> List[List[float]]:
+        """Embed texts with retry logic.
+
+        Args:
+            texts: List of texts to embed.
+            attempt: Current attempt number.
+            max_attempts: Maximum number of retry attempts.
+            **kwargs: Additional arguments.
+
+        Returns:
+            List of embedding vectors.
+        """
+        try:
+            return self(texts)
+        except Exception as e:
+            if attempt >= max_attempts - 1:
+                raise e
+            logger.warning(f"Embedding attempt {attempt + 1} failed, retrying: {e}")
+            return self.embed_with_retries(texts, attempt + 1, max_attempts, **kwargs)
+
+    def get_config(self) -> Dict[str, Any]:
+        """Return the configuration for this embedding function.
+
+        Used for serialization and persistence.
+        """
+        return {
+            "type": "local_sentence_transformers",
+            "model_name": self.model_name,
+            "cache_folder": self.cache_folder,
+            "device": self.device,
+            "normalize_embeddings": self.normalize_embeddings,
+        }
+
+    @staticmethod
+    def build_from_config(config: Dict[str, Any]) -> "LocalEmbeddingFunction":
+        """Build an embedding function from a configuration dict.
+
+        Args:
+            config: Configuration dictionary.
+
+        Returns:
+            A new LocalEmbeddingFunction instance.
+        """
+        return LocalEmbeddingFunction(
+            model_name=config.get("model_name", "sentence-transformers/all-MiniLM-L6-v2"),
+            cache_folder=config.get("cache_folder"),
+            device=config.get("device", "cpu"),
+            normalize_embeddings=config.get("normalize_embeddings", True),
+        )
+
+    @staticmethod
+    def validate_config(config: Dict[str, Any], strict: bool = False) -> None:
+        """Validate the configuration.
+
+        Args:
+            config: Configuration dictionary to validate.
+            strict: Whether to enforce strict validation.
+
+        Raises:
+            ValueError: If the configuration is invalid.
+        """
+        required_keys = ["type", "model_name"]
+        for key in required_keys:
+            if key not in config:
+                if strict:
+                    raise ValueError(f"Missing required config key: {key}")
+                else:
+                    logger.warning(f"Missing config key: {key}")
+
+    def validate_config_update(
+        self,
+        old_config: Dict[str, Any],
+        new_config: Dict[str, Any],
+        strict: bool = False,
+    ) -> None:
+        """Validate a configuration update.
+
+        Args:
+            old_config: Old configuration dictionary.
+            new_config: New configuration dictionary.
+            strict: Whether to enforce strict validation.
+        """
+        # For now, we allow any updates
+        pass
 
     @property
     def model(self):
@@ -134,19 +283,19 @@ def get_embedding_function(
     # Get config for defaults
     config = MempalaceConfig()
 
-    # Use provided values or fall back to config
-    model_name = model_name or config.embedding_model
-    cache_folder = cache_folder or config.assets_path
+    # Use provided values or fall back to config (ensure non-None)
+    effective_model_name = model_name if model_name is not None else config.embedding_model
+    effective_cache_folder = cache_folder if cache_folder is not None else config.assets_path
 
     # Create cache key
-    cache_key = f"{model_name}:{cache_folder}:{device}"
+    cache_key = f"{effective_model_name}:{effective_cache_folder}:{device}"
 
     # Return cached instance if available
     if cache_key not in _embedding_function_cache:
         logger.info(f"Creating new embedding function (cache key: {cache_key})")
         _embedding_function_cache[cache_key] = LocalEmbeddingFunction(
-            model_name=model_name,
-            cache_folder=cache_folder,
+            model_name=effective_model_name,
+            cache_folder=effective_cache_folder,
             device=device,
         )
     else:
@@ -171,14 +320,14 @@ def preload_model(
         device: Device to run model on ('cpu' or 'cuda').
     """
     config = MempalaceConfig()
-    model_name = model_name or config.embedding_model
-    cache_folder = cache_folder or config.assets_path
+    effective_model_name = model_name if model_name is not None else config.embedding_model
+    effective_cache_folder = cache_folder if cache_folder is not None else config.assets_path
 
-    logger.info(f"Preloading embedding model to {cache_folder}...")
+    logger.info(f"Preloading embedding model to {effective_cache_folder}...")
 
     embedding_fn = get_embedding_function(
-        model_name=model_name,
-        cache_folder=cache_folder,
+        model_name=effective_model_name,
+        cache_folder=effective_cache_folder,
         device=device,
     )
 

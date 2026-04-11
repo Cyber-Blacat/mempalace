@@ -23,17 +23,35 @@ from .hybrid_retriever import HybridRetriever
 from .room_aggregator import RoomAggregator
 
 
-def _get_collection_with_embeddings(client, collection_name: str):
+def _get_collection_with_embeddings(client, collection_name: str, create: bool = False):
     """Get ChromaDB collection with local embedding function.
 
     This ensures models are loaded from local assets/ directory
     instead of system cache (~/.cache/huggingface/).
+
+    Args:
+        client: ChromaDB client instance.
+        collection_name: Name of the collection.
+        create: If True, create collection if it doesn't exist.
+                If False, raise error if collection doesn't exist.
+
+    Returns:
+        ChromaDB collection or None if not found (when create=False).
     """
     embedding_fn = get_embedding_function()
-    return client.get_or_create_collection(
-        name=collection_name,
-        embedding_function=embedding_fn,
-    )
+    if create:
+        return client.get_or_create_collection(
+            name=collection_name,
+            embedding_function=embedding_fn,
+        )
+    else:
+        try:
+            return client.get_collection(
+                name=collection_name,
+                embedding_function=embedding_fn,
+            )
+        except Exception:
+            return None
 
 
 logger = logging.getLogger("mempalace_mcp")
@@ -56,11 +74,17 @@ def search(
     """
     try:
         client = chromadb.PersistentClient(path=palace_path)
-        col = _get_collection_with_embeddings(client, "mempalace_drawers")
-    except Exception:
+        col = _get_collection_with_embeddings(client, "mempalace_drawers", create=False)
+        if col is None:
+            print(f"\n  No palace found at {palace_path}")
+            print("  Run: mempalace init <dir> then mempalace mine <dir>")
+            raise SearchError(f"No palace found at {palace_path}")
+    except SearchError:
+        raise
+    except Exception as e:
         print(f"\n  No palace found at {palace_path}")
         print("  Run: mempalace init <dir> then mempalace mine <dir>")
-        raise SearchError(f"No palace found at {palace_path}")
+        raise SearchError(f"No palace found at {palace_path}") from e
 
     # Build where filter
     where = {}
@@ -134,7 +158,13 @@ def search_memories(
     """
     try:
         client = chromadb.PersistentClient(path=palace_path)
-        col = _get_collection_with_embeddings(client, "mempalace_drawers")
+        col = _get_collection_with_embeddings(client, "mempalace_drawers", create=False)
+        if col is None:
+            logger.error("No palace found at %s", palace_path)
+            return {
+                "error": "No palace found",
+                "hint": "Run: mempalace init <dir> && mempalace mine <dir>",
+            }
     except Exception as e:
         logger.error("No palace found at %s: %s", palace_path, e)
         return {
@@ -247,7 +277,13 @@ def hybrid_search_memories(
     """
     try:
         client = chromadb.PersistentClient(path=palace_path)
-        col = _get_collection_with_embeddings(client, "mempalace_drawers")
+        col = _get_collection_with_embeddings(client, "mempalace_drawers", create=False)
+        if col is None:
+            logger.error("No palace found at %s", palace_path)
+            return {
+                "error": "No palace found",
+                "hint": "Run: mempalace init <dir> && mempalace mine <dir>",
+            }
     except Exception as e:
         logger.error("No palace found at %s: %s", palace_path, e)
         return {

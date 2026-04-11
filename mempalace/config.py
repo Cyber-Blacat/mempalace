@@ -77,6 +77,65 @@ DEFAULT_HYBRID_CONFIG = {
     "use_rerank": False,  # Whether to use LLM reranking (future feature)
 }
 
+# Name/content sanitization limits
+MAX_NAME_LENGTH = 100
+MAX_CONTENT_LENGTH = 100000  # 100KB text limit
+
+
+def sanitize_name(name: str, field_type: str = "name") -> str:
+    """Sanitize and validate a name (wing, room, entity, etc.).
+
+    Args:
+        name: The name to sanitize.
+        field_type: Type of name for error messages (e.g., "wing", "room", "subject").
+
+    Returns:
+        Sanitized name string.
+
+    Raises:
+        ValueError: If name is empty or exceeds maximum length.
+    """
+    if not name:
+        raise ValueError(f"{field_type} cannot be empty")
+
+    # Strip whitespace
+    sanitized = name.strip()
+
+    if not sanitized:
+        raise ValueError(f"{field_type} cannot be empty or whitespace only")
+
+    if len(sanitized) > MAX_NAME_LENGTH:
+        raise ValueError(f"{field_type} exceeds maximum length of {MAX_NAME_LENGTH} characters")
+
+    return sanitized
+
+
+def sanitize_content(content: str) -> str:
+    """Sanitize and validate content string.
+
+    Args:
+        content: The content to sanitize.
+
+    Returns:
+        Sanitized content string.
+
+    Raises:
+        ValueError: If content is empty or exceeds maximum length.
+    """
+    if not content:
+        raise ValueError("content cannot be empty")
+
+    # Strip leading/trailing whitespace but preserve internal formatting
+    sanitized = content.strip()
+
+    if not sanitized:
+        raise ValueError("content cannot be empty or whitespace only")
+
+    if len(sanitized) > MAX_CONTENT_LENGTH:
+        raise ValueError(f"content exceeds maximum length of {MAX_CONTENT_LENGTH} characters")
+
+    return sanitized
+
 
 class MempalaceConfig:
     """Configuration manager for MemPalace.

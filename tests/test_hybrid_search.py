@@ -15,6 +15,7 @@ import pytest
 
 from mempalace.searcher import hybrid_search_memories
 from mempalace.config import MempalaceConfig
+from mempalace.embedding_function import get_embedding_function
 
 
 class TestHybridSearch:
@@ -27,9 +28,12 @@ class TestHybridSearch:
         palace_path = os.path.join(tmpdir, "palace")
         os.makedirs(palace_path)
 
-        # Create ChromaDB client and collection
+        # Create ChromaDB client and collection with embedding function
         client = chromadb.PersistentClient(path=palace_path)
-        collection = client.get_or_create_collection("mempalace_drawers")
+        embedding_fn = get_embedding_function()
+        collection = client.get_or_create_collection(
+            "mempalace_drawers", embedding_function=embedding_fn
+        )
 
         # Add test documents
         documents = [
@@ -204,11 +208,13 @@ class TestHybridSearch:
             assert len(result["room_results"]) > 0
             assert result["config"]["aggregation_method"] == method
 
-    def test_hybrid_search_no_palace(self):
+    def test_hybrid_search_no_palace(self, tmp_path):
         """Test hybrid search when palace doesn't exist."""
+        # Use a truly non-existent path (not /nonexistent/path which may have cached data)
+        nonexistent_path = str(tmp_path / "nonexistent_palace")
         result = hybrid_search_memories(
             query="test",
-            palace_path="/nonexistent/path",
+            palace_path=nonexistent_path,
         )
 
         # Should return error
